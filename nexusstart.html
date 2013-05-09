@@ -1,0 +1,32 @@
+<?php
+$debug = true;
+$verbosedebug = False;
+$file = '/var/www/betterver/dev/nexus/.htaccess';
+
+// Start EC2 machine and get its information.
+$output = shell_exec('export AWS_CONFIG_FILE=/var/www/awsinfo.cfg; aws ec2 start-instances --instance-ids i-1b2e8876');
+$output = shell_exec('export AWS_CONFIG_FILE=/var/www/awsinfo.cfg; aws ec2 describe-instances --instance-ids i-1b2e8876');
+if ($debug ==true){
+    echo ("<b>DEBUG</b> describe-instances returned $output. <br>");
+}
+$data = json_decode( $output, true );                                         //Decode the JSON output from describe-instances, then make sure it's not empty.
+
+$publicdns = ( $data["Reservations"][0]["Instances"][0]["PublicDnsName"] ); //While the array itself is not null, the field I care about /can/ be null if checked too soon. Null is not what we're looking for.
+while (is_null($publicdns)) {                                              //We need to make sure the publicdns field is not null and does not get fed into sed down the line.
+    echo ("Amazon returned null DNS, so we are trying again. <br>" . PHP_EOL );
+	flush();
+	ob_flush();
+    sleep(2);
+    $output = shell_exec('export AWS_CONFIG_FILE=/var/www/awsinfo.cfg; aws ec2 describe-instances --instance-ids i-1b2e8876'); //Query Amazon again, see if we're not-null yet.
+    $data = json_decode( $output, true );                                                                                     //Decode so we can check, and start over.
+	$publicdns = ( $data["Reservations"][0]["Instances"][0]["PublicDnsName"] );                                              // Time to check again.
+};
+echo ('Done waiting on Amazon! Now continuing... <br>');      //Data is not empty, continue.
+if ( $debug == true ){                                       //Let's verify that Amazon is indeed sending a valid DNS.
+    echo ("<b>DEBUG</b> PublicDNS is $publicdns<br>");
+};
+
+$sedcmd = 'sed "s_ec2-.*com_' . $publicdns . '_" ' . $file . ' > ' . $file . '.new'; //Get ready to replace old proxy info with new DNS from JSON array.
+$output = shell_exec( $sedcmd ); 
+shell_exec( 'mv ' . $file . '.new ' . $file );
+?>
